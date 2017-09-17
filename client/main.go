@@ -21,12 +21,19 @@ func main() {
 	}
 	fmt.Println("connected")
 	defer conn.Close()
-	go mustCopy(os.Stdout, conn)
-	mustCopy(conn, os.Stdin)
+	go reader(os.Stdout, conn)
+	write(conn, os.Stdin)
 	log.Println("disconnected")
 }
 
-func mustCopy(writer io.Writer, reader io.Reader) {
+func reader(writer io.Writer, reader io.Reader) {
+	_, err := io.Copy(writer, reader)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func write(writer io.Writer, reader io.Reader) {
 	_, err := io.Copy(writer, reader)
 	if err != nil {
 		panic(err)

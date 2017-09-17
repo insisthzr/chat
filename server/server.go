@@ -20,31 +20,31 @@ var (
 )
 
 func broadcaster() {
-	clients := make(map[handler]struct{})
+	handlers := make(map[int]handler)
 	for {
 		select {
 		case msg := <-messages:
-			for cli := range clients {
-				cli.out <- msg
+			for _, h := range handlers {
+				h.out <- msg
 			}
-		case cli := <-entering:
-			clients[cli] = struct{}{}
+		case h := <-entering:
+			handlers[h.user.Id] = h
 			msg := "online clients:\n"
-			for c := range clients {
-				msg += fmt.Sprintf("- %s\n", c.name)
+			for _, hand := range handlers {
+				msg += fmt.Sprintf("- %s\n", hand.user.Name)
 			}
-			cli.out <- msg
-		case cli := <-leaving:
-			delete(clients, cli)
-			close(cli.out)
-			close(cli.in)
+			h.out <- msg
+		case h := <-leaving:
+			delete(handlers, h.user.Id)
+			close(h.out)
+			close(h.in)
 		}
 	}
 }
 
 type handler struct {
 	conn net.Conn
-	name string
+	user *User
 	in   chan string
 	out  chan string
 }
@@ -55,32 +55,49 @@ func (h *handler) handle() {
 
 	timer := time.NewTimer(timeout)
 	h.out <- "input your name:"
-	select {
-	case name := <-h.in:
-		h.name = name
-	case <-timer.C:
-		h.conn.Close()
-		return
-	}
-
-	h.out <- "You are " + h.name
-	messages <- h.name + " has arrived"
-	entering <- *h
-
-LOOP:
+LOGIN:
 	for {
 		select {
-		case msg := <-h.in:
-			messages <- h.name + ": " + msg
-			timer.Reset(timeout)
+		case name := <-h.in:
+			user := &User{Name: name}
+			err := user.Login()
+			if err != nil {
+				h.out <- fmt.Sprintf("your name(%s) exists\npick another name", name)
+			} else {
+				h.user = user
+				break LOGIN
+			}
 		case <-timer.C:
-			break LOOP
+			h.conn.Close()
+			return
 		}
 	}
 
-	leaving <- *h
-	messages <- h.name + " has left"
+	h.out <- "You are " + h.user.Name
+	messages <- h.user.Name + " has arrived"
+	entering <- *h
 
+MSG:
+	for {
+		select {
+		case msg := <-h.in:
+			switch msg {
+			case `\quit`:
+				break MSG
+			default:
+				messages <- h.user.Name + ": " + msg
+			}
+			timer.Reset(timeout)
+		case <-timer.C:
+			break MSG
+		}
+	}
+
+	h.out <- `\quit`
+	h.user.Logout()
+	leaving <- *h
+	messages <- h.user.Name + " has left"
+	log.Printf("client: %s disconnected", h.user.Name)
 	h.conn.Close()
 }
 
@@ -97,16 +114,13 @@ func (h *handler) clientReader() {
 	}
 }
 
-func (h *handler) user() {
-
-}
-
 func newHandler(conn net.Conn) *handler {
-	return &handler{
+	h := &handler{
 		conn: conn,
 		in:   make(chan string),
 		out:  make(chan string),
 	}
+	return h
 }
 
 var (
@@ -120,6 +134,7 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Println("listening at", addr)
+	go watchUsers()
 	go broadcaster()
 	for {
 		conn, err := listener.Accept()
