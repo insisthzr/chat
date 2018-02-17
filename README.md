@@ -2,6 +2,7 @@
 
 ## Todo
 
-- [] timeout
+- [] timeout!!!
 - [] multi rooms
 - [] handle error
+- [] rwmutex instand of mutex
